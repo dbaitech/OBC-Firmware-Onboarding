@@ -2,6 +2,7 @@
 #include "errors.h"
 #include "lm75bd.h"
 #include "console.h"
+#include "logging.h"
 
 #include <FreeRTOS.h>
 #include <os_task.h>
@@ -43,18 +44,66 @@ void initThermalSystemManager(lm75bd_config_t *config) {
 
 error_code_t thermalMgrSendEvent(thermal_mgr_event_t *event) {
   /* Send an event to the thermal manager queue */
+  if (thermalMgrQueueHandle == NULL) {
+    return ERR_CODE_INVALID_QUEUE_MSG;
+  }
 
+  if (event == NULL) {
+    return ERR_CODE_INVALID_ARG;
+  }
+
+  if (xQueueSend(thermalMgrQueueHandle, event, 0) != pdTRUE) {
+    return ERR_CODE_QUEUE_FULL;
+  }
   return ERR_CODE_SUCCESS;
 }
 
 void osHandlerLM75BD(void) {
   /* Implement this function */
+  thermal_mgr_event_t event = { .type =  THERMAL_MGR_EVENT_OS_INTERRUPT };
+  error_code_t errCode = thermalMgrSendEvent(&event);
+  LOG_IF_ERROR_CODE(errCode);
 }
 
 static void thermalMgr(void *pvParameters) {
   /* Implement this task */
+  thermal_mgr_event_t event;
+  error_code_t errCode;
+
+  if (pvParameters == NULL) {
+    LOG_ERROR_CODE(ERR_CODE_INVALID_ARG);
+    return;
+  }
+
   while (1) {
-    
+    if (xQueueReceive(thermalMgrQueueHandle, &event, portMAX_DELAY) == pdTRUE) {
+      if ((event.type == THERMAL_MGR_EVENT_MEASURE_TEMP_CMD) ||
+          (event.type == THERMAL_MGR_EVENT_OS_INTERRUPT)) {
+
+        float temperature;
+        lm75bd_config_t config = *(lm75bd_config_t *) pvParameters;  // obtaining lm75db config
+        errCode = readTempLM75BD(config.devAddr, &temperature);  // measuring the current temperature
+
+        if (errCode != ERR_CODE_SUCCESS) {
+          LOG_IF_ERROR_CODE(errCode);
+          continue;
+        }
+
+        addTemperatureTelemetry(temperature);  // send the temperature
+
+        if (event.type == THERMAL_MGR_EVENT_OS_INTERRUPT) {
+          if (temperature > config.hysteresisThresholdCelsius) {
+            overTemperatureDetected();
+          } else {
+            safeOperatingConditions();
+          }
+        }
+      } else {
+        LOG_ERROR_CODE(ERR_CODE_INVALID_STATE);
+      }
+    } else {
+      LOG_ERROR_CODE(ERR_CODE_INVALID_QUEUE_MSG);
+    }
   }
 }
 
