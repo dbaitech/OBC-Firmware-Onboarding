@@ -45,7 +45,7 @@ void initThermalSystemManager(lm75bd_config_t *config) {
 error_code_t thermalMgrSendEvent(thermal_mgr_event_t *event) {
   /* Send an event to the thermal manager queue */
   if (thermalMgrQueueHandle == NULL) {
-    return ERR_CODE_INVALID_QUEUE_MSG;
+    return ERR_CODE_INVALID_STATE;
   }
 
   if (event == NULL) {
@@ -67,25 +67,24 @@ void osHandlerLM75BD(void) {
 
 static void thermalMgr(void *pvParameters) {
   /* Implement this task */
-  thermal_mgr_event_t event;
-  error_code_t errCode;
-
   if (pvParameters == NULL) {
     LOG_ERROR_CODE(ERR_CODE_INVALID_ARG);
-    return;
+    while(1);
   }
 
+  lm75bd_config_t config = *(lm75bd_config_t *) pvParameters;  // obtaining lm75db config
+
   while (1) {
+	thermal_mgr_event_t event;
     if (xQueueReceive(thermalMgrQueueHandle, &event, portMAX_DELAY) == pdTRUE) {
       if ((event.type == THERMAL_MGR_EVENT_MEASURE_TEMP_CMD) ||
           (event.type == THERMAL_MGR_EVENT_OS_INTERRUPT)) {
 
         float temperature;
-        lm75bd_config_t config = *(lm75bd_config_t *) pvParameters;  // obtaining lm75db config
-        errCode = readTempLM75BD(config.devAddr, &temperature);  // measuring the current temperature
+        error_code_t errCode = readTempLM75BD(config.devAddr, &temperature);  // measuring the current temperature
 
         if (errCode != ERR_CODE_SUCCESS) {
-          LOG_IF_ERROR_CODE(errCode);
+          LOG_ERROR_CODE(errCode);
           continue;
         }
 
@@ -99,10 +98,10 @@ static void thermalMgr(void *pvParameters) {
           }
         }
       } else {
-        LOG_ERROR_CODE(ERR_CODE_INVALID_STATE);
+        LOG_ERROR_CODE(ERR_CODE_INVALID_QUEUE_MSG);
       }
     } else {
-      LOG_ERROR_CODE(ERR_CODE_INVALID_QUEUE_MSG);
+      LOG_ERROR_CODE(ERR_CODE_FAILED_QUEUE_OPERATION);
     }
   }
 }
